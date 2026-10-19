@@ -64,6 +64,19 @@ With default VIP-0 fees the round trip costs **34 bps** (live mode replaces this
 so only dislocations well above that qualify. The dashboard and `/market BTC` show each market's net edge so you
 can see exactly why nothing is firing.
 
+**Where the 34 bps comes from:** `2 × (5 futures + 10 spot) + 4 × 1 slippage`, that is 30 bps of taker fees (entry and
+exit on both legs) plus 4 bps of assumed slippage on the four fills. `ExpectedFunding` counts only funding
+settlements crossed in the assumed 300 s hold (`expected_hold_s`), so most trades earn none. The baseline needs
+`min_samples` = 60 seconds of data before any signal, and uses the last `lookback` = 300 seconds.
+
+**Worked example** (basis points; μ = 3, σ = 2, exit cost 3, funding +1, buffer 8):
+
+```
+target = 3 + 0.5·2 + 3 = 7
+Executable entry basis 45:  gross = 45 − 7 = 38   Net = 38 + 1 − 34 − 8 = −3   → no trade (a real gap, but too small)
+Executable entry basis 60:  gross = 60 − 7 = 53   Net = 53 + 1 − 34 − 8 = 12   → trade (z = (62 − 3)/2 ≈ 30 ≥ 3,  Net ≥ 1)
+```
+
 Be realistic about the edge: on liquid USDT perps the basis normally sits within a few bps of spot, and
 the rare large gaps are contested by co-located market makers with maker-fee rebates. A bot polling REST
 once per second will usually be late to them. Paper mode exists so you can measure the *actual* net P&L
