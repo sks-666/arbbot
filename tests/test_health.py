@@ -1,42 +1,11 @@
-"""Hosted mode: the health endpoint leaks nothing, the port is validated, and real orders are refused."""
+"""Hosted mode basics: the port is validated and real orders are refused."""
 import asyncio
 import os
 import unittest
 from unittest import mock
 
-import aiohttp
-from aiohttp import web
-
-from arbbot.health import DEFAULT_PORT, hosted_port, make_health_app
+from arbbot.health import DEFAULT_PORT, hosted_port
 from arbbot.main import amain, parse_args
-
-
-class HealthServerTests(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
-        self.runner = web.AppRunner(make_health_app())
-        await self.runner.setup()
-        await web.TCPSite(self.runner, "127.0.0.1", 0).start()
-        self.base = f"http://127.0.0.1:{self.runner.addresses[0][1]}"
-
-    async def asyncTearDown(self):
-        await self.runner.cleanup()
-
-    async def test_health_replies_with_only_ok(self):
-        async with aiohttp.ClientSession() as s:
-            for path in ("/", "/healthz"):
-                async with s.get(self.base + path) as r:
-                    self.assertEqual(r.status, 200)
-                    self.assertEqual(await r.json(), {"ok": True})
-                    self.assertEqual(r.headers["Cache-Control"], "no-store")
-            async with s.head(self.base + "/healthz") as r:  # uptime pingers often use HEAD
-                self.assertEqual(r.status, 200)
-
-    async def test_no_dashboard_or_control_routes(self):
-        async with aiohttp.ClientSession() as s:
-            for method, path in (("get", "/api/snapshot"), ("get", "/ws"), ("post", "/api/flatten"),
-                                 ("post", "/api/halt"), ("post", "/api/resume")):
-                async with getattr(s, method)(self.base + path) as r:
-                    self.assertIn(r.status, (404, 405), f"{method} {path} must not exist in hosted mode")
 
 
 class PortTests(unittest.TestCase):

@@ -20,7 +20,8 @@ from .config import load
 from .engine import Engine
 from .executor import PaperExecutor
 from .feeds import WS_DEFAULTS, Board, HybridFeed, RestFeed, SimFeed, WsFeed
-from .health import hosted_port, make_health_app
+from .health import hosted_port
+from .hosted_dashboard import MIN_PASSWORD, make_hosted_app, settings_from_env
 from .live import LiveExecutor
 from .portfolio import Portfolio, Store
 from .publisher import SnapshotPublisher
@@ -46,8 +47,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--live", action="store_true", help="send REAL orders (needs API keys; mainnet also needs ARBBOT_LIVE_ACK)")
     p.add_argument("--testnet", action="store_true", help="use Binance testnet hosts (with --live)")
     p.add_argument("--hosted", action="store_true",
-                   help="container-host mode (paper only): serve just a health check on 0.0.0.0:$PORT instead of the "
-                        "local dashboard; the recorder stays off unless ARBBOT_RECORD=1")
+                   help="container-host mode (paper only): serve a READ-ONLY dashboard behind a login (DASHBOARD_PASSWORD) "
+                        "plus /healthz on 0.0.0.0:$PORT instead of the local dashboard; the recorder stays off unless "
+                        "ARBBOT_RECORD=1")
     p.add_argument("--seed", type=int, help="random seed for the simulator")
     p.add_argument("--test-alert", action="store_true", help="send one Telegram test message and exit")
     p.add_argument("--find-chat-id", action="store_true", help="list Telegram chats that messaged your bot, then exit")
@@ -215,8 +217,10 @@ async def amain(args: argparse.Namespace) -> None:
         listener = TelegramListener(cfg.alerts, alerts, CommandHandler(engine, label),
                                     poll_timeout_s=cfg.alerts.poll_timeout_s)
         dash = Dashboard(engine, cfg, ROOT / "web")
-        if args.hosted:  # public interface: health check only, never the dashboard with its control endpoints
-            runner = web.AppRunner(make_health_app())
+        if args.hosted:  # public interface: the READ-ONLY page behind a login, never the dashboard with its controls
+            hosted_password, hosted_user = settings_from_env()
+            runner = web.AppRunner(make_hosted_app(engine, ROOT / "vercel-dashboard" / "views" / "dashboard.html",
+                                                   hosted_password, hosted_user))
             host, port = "0.0.0.0", hosted_port()
         else:
             runner = web.AppRunner(dash.make_app())
@@ -229,8 +233,12 @@ async def amain(args: argparse.Namespace) -> None:
         log.info("scanning %d markets | round-trip cost %.1f bps | z>=%.1f net>=%.1f bps",
                  len(board.markets), round_trip_cost_bps(cfg.fees), cfg.strategy.z_entry, cfg.strategy.min_net_edge_bps)
         if args.hosted:
-            log.info("hosted mode: health check on %s:%d (no dashboard) | state: %s | pause entries with the Telegram /pause command",
-                     host, port, db_path.name)
+            if len(hosted_password) >= MIN_PASSWORD:
+                log.info("hosted mode: READ-ONLY dashboard on %s:%d (login user %r) | state: %s | pause entries with the "
+                         "Telegram /pause command", host, port, hosted_user, db_path.name)
+            else:
+                log.warning("hosted mode: no dashboard (set DASHBOARD_PASSWORD, at least %d characters); only /healthz "
+                            "answers on %s:%d | state: %s", MIN_PASSWORD, host, port, db_path.name)
         else:
             log.info("dashboard: http://%s:%d   | state: %s | kill switch: touch %s",
                      host, port, db_path.name, cfg.risk.kill_file)

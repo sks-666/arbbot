@@ -8,7 +8,10 @@ logs/
 tests/
 scripts/
 deploy/
-vercel-dashboard/
+vercel-dashboard/api/
+vercel-dashboard/lib/
+vercel-dashboard/test/
+vercel-dashboard/node_modules/
 __pycache__/
 *.pyc
 .DS_Store

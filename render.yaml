@@ -22,6 +22,8 @@ services:
         sync: false
       - key: DASHBOARD_PUSH_TOKEN
         sync: false
+      - key: DASHBOARD_PASSWORD   # login for the read-only dashboard on this service (user: viewer); at least 12 characters
+        sync: false
       # - key: ARBBOT_RECORD      # persistent plan only: record market data to the disk for backtesting
       #   value: "1"
     # disk:                        # persistent plan only (not available on free)

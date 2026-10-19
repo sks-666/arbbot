@@ -1,4 +1,5 @@
-# Paper-mode arbbot for container hosts (Render, Fly, ...). Serves only a health check, never the dashboard.
+# Paper-mode arbbot for container hosts (Render, Fly, ...). Serves a read-only dashboard behind a login
+# (DASHBOARD_PASSWORD) plus /healthz; never the local dashboard with its pause/flatten controls.
 FROM python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -12,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY run.py config.toml ./
 COPY arbbot ./arbbot
 COPY web ./web
+COPY vercel-dashboard/views ./vercel-dashboard/views
 RUN mkdir -p data logs
 
 # Runs as root on purpose: a persistent disk mounted at /app/data is root-owned on most hosts, and a non-root user

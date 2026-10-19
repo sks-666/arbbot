@@ -208,16 +208,20 @@ blocks Binance the bot stays safe but blind (feed down, no entries) until it rec
 
 ## Running without your computer (Render)
 
-`python run.py --hosted` is the container-host mode: **paper only** (`--hosted --live` refuses to start), it serves
-just `GET /healthz` -> `{"ok": true}` on `0.0.0.0:$PORT` instead of the local dashboard (which has pause/flatten
-controls and is never exposed), and the recorder stays off unless `ARBBOT_RECORD=1`. Entries can still be paused from
-Telegram (`/pause`, `/resume`). The `Dockerfile` and `render.yaml` package it.
+`python run.py --hosted` is the container-host mode: **paper only** (`--hosted --live` refuses to start), and the
+recorder stays off unless `ARBBOT_RECORD=1`. Instead of the local dashboard (which has pause/flatten controls and is
+never exposed) it serves, on `0.0.0.0:$PORT`, the same **read-only** page as the Vercel copy straight from the running
+bot at `/` and `/api/snapshot`, behind HTTP Basic auth (user `viewer` or `DASHBOARD_USER`, password
+`DASHBOARD_PASSWORD`, at least 12 characters). It fails closed: without a password only `GET /healthz` answers. Failed
+logins are delayed and capped at 30 a minute. Entries can still be paused from Telegram (`/pause`, `/resume`). The
+`Dockerfile` and `render.yaml` package it.
 
 1. Put the project in a **private** GitHub repository. `.env`, `data/` and `logs/` are in `.gitignore`; check
    `git status` shows no `.env` before pushing. Never make this repo public.
 2. In Render: New -> Blueprint -> pick the repo. `render.yaml` sets the **Frankfurt** region (Binance refuses US
-   addresses; the region can't be changed later) and asks you for four secrets: `TELEGRAM_BOT_TOKEN`,
-   `TELEGRAM_CHAT_ID`, `DASHBOARD_PUSH_URL` and `DASHBOARD_PUSH_TOKEN` (the Upstash **read-write** token).
+   addresses; the region can't be changed later) and asks you for five secrets: `TELEGRAM_BOT_TOKEN`,
+   `TELEGRAM_CHAT_ID`, `DASHBOARD_PUSH_URL`, `DASHBOARD_PUSH_TOKEN` (the Upstash **read-write** token; only needed for
+   the Vercel copy) and `DASHBOARD_PASSWORD` (the login for the dashboard on Render itself).
 3. **Stop the bot on your computer first.** Two instances would both publish to the same page and both poll Telegram.
 4. Watch the Render logs for `hosted mode: health check on 0.0.0.0:...` and `hosted dashboard: publishing ...`.
 
