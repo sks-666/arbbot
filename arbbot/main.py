@@ -237,8 +237,9 @@ async def amain(args: argparse.Namespace) -> None:
                 log.info("hosted mode: READ-ONLY dashboard on %s:%d (login user %r) | state: %s | pause entries with the "
                          "Telegram /pause command", host, port, hosted_user, db_path.name)
             else:
-                log.warning("hosted mode: no dashboard (set DASHBOARD_PASSWORD, at least %d characters); only /healthz "
-                            "answers on %s:%d | state: %s", MIN_PASSWORD, host, port, db_path.name)
+                seen = "is not set" if not hosted_password else f"has only {len(hosted_password)} characters"
+                log.warning("hosted mode: no dashboard because DASHBOARD_PASSWORD %s (it needs at least %d); only /healthz "
+                            "answers on %s:%d | state: %s", seen, MIN_PASSWORD, host, port, db_path.name)
         else:
             log.info("dashboard: http://%s:%d   | state: %s | kill switch: touch %s",
                      host, port, db_path.name, cfg.risk.kill_file)
