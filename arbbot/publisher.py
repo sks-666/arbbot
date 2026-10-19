@@ -5,6 +5,7 @@ What leaves the machine is the dashboard snapshot minus control state and raw er
 included, and the token is redacted from any log line. Failures can never affect trading.
 """
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -58,6 +59,12 @@ class SnapshotPublisher:
     @property
     def enabled(self) -> bool:
         return bool(self.cfg.enabled and self.url and self.token and self.session is not None)
+
+    def fingerprints(self) -> tuple[str, str]:
+        """Short one-way hashes of the URL and token, safe to log: compare two machines' settings without a secret."""
+        def fp(value: str) -> str:
+            return hashlib.sha256(value.encode()).hexdigest()[:8] if value else "-"
+        return fp(self.url), fp(self.token)
 
     def _redact(self, text: str) -> str:
         return text.replace(self.token, "***") if self.token else text

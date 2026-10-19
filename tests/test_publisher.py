@@ -137,6 +137,16 @@ class PublisherTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(task, return_exceptions=True)
         self.assertEqual(self.up.commands, [])
 
+    async def test_fingerprints_compare_settings_without_revealing_them(self):
+        a = self.pub().fingerprints()
+        self.assertEqual(a, self.pub(url=self.up.url + "/ ", token=" " + TOKEN + "\n").fingerprints())  # trimmed like the real values
+        self.assertNotEqual(a[1], self.pub(token=TOKEN[:-1] + "X").fingerprints()[1])  # one changed character shows up
+        self.assertNotEqual(a[0], self.pub(url="https://other.upstash.io").fingerprints()[0])
+        for shown in a:
+            self.assertEqual(len(shown), 8)
+            self.assertNotIn(shown, TOKEN)
+        self.assertEqual(self.pub(url="", token="").fingerprints(), ("-", "-"))
+
     async def test_config_switch_disables_it(self):
         off = SnapshotPublisher(PublisherCfg(enabled=False), self.eng, self.up.url, TOKEN, self.session)
         self.assertFalse(off.enabled)

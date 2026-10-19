@@ -255,7 +255,9 @@ async def amain(args: argparse.Namespace) -> None:
         publisher = SnapshotPublisher(cfg.publisher, engine, os.environ.get("DASHBOARD_PUSH_URL", ""),
                                       os.environ.get("DASHBOARD_PUSH_TOKEN", ""), session)
         if publisher.enabled:
-            log.info("hosted dashboard: publishing a read-only snapshot every %.0fs", cfg.publisher.interval_s)
+            url_fp, token_fp = publisher.fingerprints()
+            log.info("hosted dashboard: publishing a read-only snapshot every %.0fs (settings fingerprint: url %s, token %s)",
+                     cfg.publisher.interval_s, url_fp, token_fp)
         coros = [feed.run(), engine.run(), dash.broadcast_loop(), alerts.run(), listener.run(), publisher.run()]
         if sampler is not None:
             coros.append(sampler.run())
