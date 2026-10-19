@@ -1,0 +1,95 @@
+# binance-arb-bot configuration.
+# Unknown keys are rejected on load, so a typo can never silently change a risk limit.
+
+[universe]
+max_markets = 55                  # how many USDT perpetuals to scan (ranked by 24h volume)
+min_quote_volume_usd = 20000000   # skip illiquid perps
+exclude_bases = ["USDC", "FDUSD", "TUSD", "USDP", "BUSD", "EUR", "AEUR"]
+
+[feed]
+mode = "ws"                       # "ws" = WebSocket streams, REST fallback | "rest" = REST only | "sim" = offline
+interval_s = 1.0                  # scan cadence (WS data is always latest; try 0.25 for faster scans)
+max_quote_age_s = 3.0             # quotes older than this are treated as stale (no signals)
+request_timeout_s = 4.0
+ws_stale_s = 5.0                  # no WS message for this long => fall back to REST polling
+ws_max_silent_s = 30.0            # a symbol silent this long stops counting as fresh
+ws_futures_url = ""               # override stream base, e.g. "wss://fstream.binance.com"
+ws_spot_url = ""                  # override stream base, e.g. "wss://stream.binance.com:9443"
+ws_streams_per_conn = 40          # streams per WebSocket connection (keeps URLs short at 100+ markets)
+
+[fees]                            # basis points of notional, per leg, per fill
+futures_taker_bps = 5.0           # USD-M VIP0 taker 0.05%
+spot_taker_bps = 10.0             # spot VIP0 taker 0.10% (7.5 with BNB discount)
+slippage_bps = 1.0                # assumed price slippage per fill
+
+[strategy]                        # perp-vs-spot basis convergence (cash-and-carry)
+lookback = 300                    # basis samples (seconds) used for mean / std
+min_samples = 60                  # warm-up before any signal
+z_entry = 3.0                     # basis must be this many std above its mean
+exit_z = 0.5                      # exit once basis falls back under mean + exit_z * std
+min_net_edge_bps = 1.0            # MinimumRequiredEdge: expected profit after costs AND the risk buffer must beat this
+baseline = "robust"               # "robust" = median / 1.4826*MAD (a spike can't inflate it) | "meanstd"
+exit_cost_percentile = 0.75       # expected exit spread: this percentile of recent history (or today's, if worse)
+risk_buffer_bps = 8.0             # model-error allowance subtracted from every edge (floor); real trades missed by 30-180 bps
+risk_buffer_max_bps = 30.0        # cap on the adaptive buffer
+adaptive_buffer = true            # buffer grows to the 95th percentile of (predicted - realised) once enough trades exist
+adaptive_min_trades = 10
+adaptive_percentile = 0.95
+expected_hold_s = 300.0           # used only to estimate funding carry in the edge
+min_hold_s = 5.0
+max_hold_s = 900.0
+stop_loss_bps = 25.0              # exit if executable basis widens this much against us
+max_abs_basis_bps = 300.0         # ignore absurd readings (bad data, delistings)
+max_mark_index_bps = 50.0         # mark far from index => a price is broken (halted spot, thin book): skip
+min_entry_basis_bps = 0.0         # only enter when the perp trades at/above spot (executable entry basis)
+stale_force_exit_s = 30.0         # close a position if quotes stay stale this long
+std_floor_bps = 0.5
+
+[risk]
+trade_notional_usd = 200.0        # target size per position (each leg)
+min_trade_usd = 25.0
+min_touch_depth_usd = 300.0       # skip markets whose best bid/ask hold less than this (AVAUSDT-style traps)
+depth_fraction = 0.5              # never take more than this share of top-of-book depth
+use_depth_sizing = true           # real order-book walk: pick the largest size whose net edge still clears the bar
+size_steps = [1.0, 0.75, 0.5, 0.35, 0.2]   # fractions of trade_notional_usd tried, largest first
+max_open_positions = 5
+max_total_notional_usd = 1000.0
+symbol_cooldown_s = 120.0
+daily_loss_limit_usd = 25.0       # halts entries and flattens (UTC day)
+max_consecutive_errors = 3
+kill_file = "KILL"                # `touch KILL` halts + flattens instantly; remove to re-arm
+
+[execution]
+mode = "paper"                    # "paper" | "live"  (live also needs --live and API keys)
+env = "mainnet"                   # "mainnet" | "testnet"
+leverage = 2                      # futures leverage for the short leg (isolated margin)
+
+[server]
+host = "127.0.0.1"
+port = 8765
+
+[recorder]                        # live market data for backtests: python backtest.py info|slippage|replay
+enabled = true                    # real feeds only (about 50-100 MB/day compressed)
+dir = "data/recordings"
+depth_every_s = 1.0               # one order-book sample per second, round-robin over all markets
+max_mb = 2000                     # oldest recordings are deleted beyond this
+
+[publisher]                       # read-only snapshots for the hosted dashboard (see vercel-dashboard/README.md)
+enabled = true                    # active only if DASHBOARD_PUSH_URL and DASHBOARD_PUSH_TOKEN are in .env
+interval_s = 10.0
+key = "arbbot:snapshot"
+ttl_s = 120                       # a stopped bot disappears from the page after this many seconds
+
+[alerts]                      # Telegram; active only if TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID are in .env
+enabled = true
+notify_signals = true             # LONG spot / SHORT perp signal detected
+notify_trades = true              # entries and exits with P&L
+notify_halts = true               # halts, resumes, faults, kill switch, daily loss limit
+notify_feed = true                # data feed down / REST fallback / recovered
+commands = true                   # answer questions in Telegram (/signals, /status, "any trades?"); your chat only
+poll_timeout_s = 25.0             # Telegram long-poll seconds (only ONE running bot may poll a given bot token)
+signal_cooldown_s = 300.0         # at most one signal alert per market per this many seconds
+feed_debounce_s = 10.0            # feed problem must persist this long before alerting
+min_interval_s = 1.1              # Telegram allows ~1 message/second per chat
+queue_size = 50
+api_base = "https://api.telegram.org"

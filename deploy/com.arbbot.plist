@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent: starts the bot at login and restarts it if it crashes (non-zero exit).
+  A clean stop (Ctrl-C / SIGTERM / `launchctl bootout`) is NOT restarted.
+  Install / remove: see "Running 24/7" in README.md. Edit the paths below if the project moves.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.arbbot</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/ssomai/Documents/binance-arb-bot/.venv/bin/python</string>
+    <string>/Users/ssomai/Documents/binance-arb-bot/run.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/ssomai/Documents/binance-arb-bot</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/ssomai/Documents/binance-arb-bot/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ssomai/Documents/binance-arb-bot/logs/launchd.err.log</string>
+</dict>
+</plist>

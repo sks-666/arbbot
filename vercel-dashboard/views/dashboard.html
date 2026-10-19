@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Basis Arb Monitor</title>
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #121821; --panel-2: #172030; --line: #243044; --text: #e6edf6; --muted: #8394ab;
+    --accent: #4cc9f0; --pos: #2fd18b; --neg: #ff6b6b; --warn: #f5b942; --sim: #b58cff;
+    --shadow: 0 1px 0 rgba(255,255,255,.03) inset;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f6fa; --panel: #ffffff; --panel-2: #eef2f8; --line: #d8e0ec; --text: #142033; --muted: #5d6f88;
+      --accent: #0a7fb0; --pos: #0e9d63; --neg: #d6403f; --warn: #b87a00; --sim: #7a4fd6;
+      --shadow: none; color-scheme: light;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.45 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .num, td.n, .kpi .v { font-variant-numeric: tabular-nums; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .wrap { max-width: 1680px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  h1 { font-size: 17px; margin: 0; letter-spacing: .2px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .9px; color: var(--muted); margin: 0; font-weight: 600; }
+  .hdr-left, .hdr-right { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; font-weight: 600; background: var(--panel); }
+  .badge.paper { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .badge.live { color: #fff; background: var(--neg); border-color: var(--neg); }
+  .badge.sim { color: var(--sim); border-color: color-mix(in srgb, var(--sim) 50%, transparent); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--pos); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pos) 25%, transparent); }
+  .dot.bad { background: var(--neg); }
+  button { font: inherit; font-size: 13px; font-weight: 600; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; min-height: 32px; }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible, th[data-k]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.danger { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 45%, var(--line)); }
+  .banner { display: none; margin-bottom: 12px; padding: 10px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent); background: color-mix(in srgb, var(--warn) 12%, var(--panel)); color: var(--text); }
+  .banner.show { display: block; }
+  .banner.err { border-color: color-mix(in srgb, var(--neg) 55%, transparent); background: color-mix(in srgb, var(--neg) 12%, var(--panel)); }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); }
+  .kpi .l { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .7px; }
+  .kpi .v { font-size: 20px; font-weight: 650; margin-top: 2px; }
+  .kpi .s { color: var(--muted); font-size: 12px; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(320px, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 1100px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+  .card + .card { margin-top: 14px; }
+  .card-h { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); gap: 10px; }
+  .card-h .hint { color: var(--muted); font-size: 12px; }
+  .scroll { overflow: auto; }
+  .scroll.tall { max-height: 74vh; }
+  .scroll.mid { max-height: 280px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 6px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+  th:first-child, td:first-child { text-align: left; }
+  th { position: sticky; top: 0; background: var(--panel-2); color: var(--muted); font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; z-index: 1; }
+  th[data-k] { cursor: pointer; user-select: none; }
+  th[data-k]:hover { color: var(--text); }
+  th .arr { margin-left: 3px; color: var(--accent); }
+  tr.signal td { background: color-mix(in srgb, var(--pos) 11%, transparent); }
+  tr.held td { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+  td.sym { font-weight: 600; font-family: ui-sans-serif, -apple-system, sans-serif; }
+  .pos { color: var(--pos); } .neg { color: var(--neg); } .mut { color: var(--muted); } .warn { color: var(--warn); }
+  .chip { display: inline-block; min-width: 58px; text-align: center; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 650; border: 1px solid var(--line); color: var(--muted); }
+  .chip.signal { background: var(--pos); border-color: var(--pos); color: #04150d; }
+  .chip.held { background: var(--accent); border-color: var(--accent); color: #031219; }
+  .chip.watch { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+  .chip.stale { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 55%, transparent); }
+  .chip.warmup { border-style: dashed; }
+  .empty { padding: 18px 14px; color: var(--muted); }
+  .ev { padding: 6px 14px; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); display: flex; gap: 10px; font-size: 12.5px; }
+  .ev time { color: var(--muted); font-family: ui-monospace, Menlo, monospace; flex: none; }
+  .ev.error { color: var(--neg); } .ev.win { color: var(--pos); } .ev.loss { color: var(--warn); } .ev.entry { color: var(--accent); }
+  footer { margin-top: 14px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  @media (max-width: 640px) { .wrap { padding: 12px 16px; } .kpi .v { font-size: 18px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="hdr-left">
+      <h1>Basis Arb Monitor</h1>
+      <span id="b-mode" class="badge paper">PAPER</span>
+      <span id="b-sim" class="badge sim" hidden>SIMULATED FEED</span>
+      <span class="badge"><span id="dot" class="dot"></span><span id="feedtxt">connecting…</span></span>
+    </div>
+    <div class="hdr-right"><span class="badge" title="This page has no controls">READ-ONLY</span><span class="badge" id="updated">connecting…</span></div>
+  </header>
+
+  <div id="banner" class="banner" role="status"></div>
+
+  <section class="kpis" aria-label="Summary">
+    <div class="kpi"><div class="l">Markets</div><div class="v" id="k-markets">–</div><div class="s" id="k-markets-s">&nbsp;</div></div>
+    <div class="kpi"><div class="l">Signals now</div><div class="v" id="k-signals">–</div><div class="s" id="k-signals-s">&nbsp;</div></div>
+    <div class="kpi"><div class="l">Open positions</div><div class="v" id="k-open">–</div><div class="s" id="k-open-s">&nbsp;</div></div>
+    <div class="kpi"><div class="l">Realised P&amp;L</div><div class="v" id="k-real">–</div><div class="s" id="k-real-s">&nbsp;</div></div>
+    <div class="kpi"><div class="l">Today (UTC)</div><div class="v" id="k-day">–</div><div class="s" id="k-day-s">&nbsp;</div></div>
+    <div class="kpi"><div class="l">Win rate</div><div class="v" id="k-win">–</div><div class="s" id="k-win-s">&nbsp;</div></div>
+    <div class="kpi"><div class="l">Feed</div><div class="v" id="k-feed">–</div><div class="s" id="k-feed-s">&nbsp;</div></div>
+  </section>
+
+  <div class="grid">
+    <section class="card" aria-labelledby="h-markets">
+      <div class="card-h"><h2 id="h-markets">Markets</h2><span class="hint" id="mk-hint">click a column to sort</span></div>
+      <div class="scroll tall">
+        <table>
+          <thead><tr id="mk-head"></tr></thead>
+          <tbody id="mk-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div>
+      <section class="card" aria-labelledby="h-pos">
+        <div class="card-h"><h2 id="h-pos">Open positions</h2><span class="hint" id="pos-hint"></span></div>
+        <div class="scroll mid"><table><thead><tr><th>Market</th><th>Held</th><th>Size</th><th>Entry</th><th>Now</th><th>Unreal.</th></tr></thead><tbody id="pos-body"></tbody></table></div>
+      </section>
+      <section class="card" aria-labelledby="h-tr">
+        <div class="card-h"><h2 id="h-tr">Recent trades</h2></div>
+        <div class="scroll mid"><table><thead><tr><th>Market</th><th>P&amp;L</th><th>bps</th><th>Held</th><th>Reason</th></tr></thead><tbody id="tr-body"></tbody></table></div>
+      </section>
+      <section class="card" aria-labelledby="h-ev">
+        <div class="card-h"><h2 id="h-ev">Event log</h2></div>
+        <div class="scroll mid" id="ev-body"></div>
+      </section>
+    </div>
+  </div>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+const COLS = [
+  { k: "sym", t: "Market", f: r => r.sym, cls: "sym" },
+  { k: "perp", t: "Perp", f: r => price(r.perp) },
+  { k: "basis", t: "Basis bps", f: r => sg(r.basis, 1), tip: "Perp mid vs spot mid" },
+  { k: "z", t: "Z", f: r => warm(r) ? "–" : r.z.toFixed(2), tip: "Basis vs its own rolling mean, in std devs" },
+  { k: "entry", t: "Entry bps", f: r => sg(r.entry, 1), tip: "Executable: short perp at bid vs buy spot at ask" },
+  { k: "net", t: "Net edge", f: r => warm(r) ? "–" : sg(r.net, 1), tip: "Expected profit in bps after all fees and slippage" },
+  { k: "mi", t: "Mark−Idx", f: r => sg(r.mi, 1), tip: "Mark price vs index price, bps" },
+  { k: "fund", t: "Funding APR", f: r => sg(r.fund, 1) + "%", tip: "Approximate, 8h-interval basis" },
+  { k: "depth", t: "Depth", f: r => "$" + (r.depth >= 1000 ? (r.depth / 1000).toFixed(1) + "k" : r.depth.toFixed(0)), tip: "Top-of-book fillable USD (smaller side)" },
+  { k: "age", t: "Age", f: r => r.age < 1000 ? r.age.toFixed(0) + "ms" : (r.age / 1000).toFixed(1) + "s" },
+  { k: "status", t: "Status", f: r => chip(r) },
+];
+const RANK = { signal: 0, held: 1, watch: 2, ok: 3, warmup: 4, stale: 5 };
+let snap = null, sortKey = "net", sortDir = -1, ws = null, retry = 0;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const warm = r => r.status === "warmup" || r.status === "stale";
+function price(p) { if (!p) return "–"; return p >= 1000 ? p.toFixed(2) : p >= 1 ? p.toFixed(4) : p.toPrecision(4); }
+function sg(v, d) { return (v > 0 ? "+" : "") + v.toFixed(d); }
+function money(v) { return (v < 0 ? "−$" : "+$") + Math.abs(v).toFixed(2); }
+function cls(v) { return v > 0 ? "pos" : v < 0 ? "neg" : "mut"; }
+function dur(s) { s = Math.max(0, Math.round(s)); return s < 90 ? s + "s" : s < 5400 ? Math.round(s / 60) + "m" : (s / 3600).toFixed(1) + "h"; }
+function chip(r) {
+  const label = r.status === "warmup" ? `warm ${r.n}/${snap.model.min_samples}` : r.status;
+  return `<span class="chip ${r.status}" ${r.note ? `title="${esc(r.note)}"` : ""}>${esc(label)}</span>`;
+}
+
+function renderHead() {
+  $("mk-head").innerHTML = COLS.map(c =>
+    `<th data-k="${c.k}" tabindex="0" ${c.tip ? `title="${esc(c.tip)}"` : ""} aria-sort="${c.k === sortKey ? (sortDir < 0 ? "descending" : "ascending") : "none"}">${esc(c.t)}${c.k === sortKey ? `<span class="arr">${sortDir < 0 ? "▼" : "▲"}</span>` : ""}</th>`
+  ).join("");
+}
+function setSort(k) {
+  if (k === sortKey) sortDir = -sortDir; else { sortKey = k; sortDir = k === "sym" ? 1 : -1; }
+  renderHead(); if (snap) renderMarkets();
+}
+$("mk-head").addEventListener("click", e => { const th = e.target.closest("th[data-k]"); if (th) setSort(th.dataset.k); });
+$("mk-head").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { const th = e.target.closest("th[data-k]"); if (th) { e.preventDefault(); setSort(th.dataset.k); } } });
+
+function renderMarkets() {
+  const rows = snap.markets.slice();
+  const key = r => sortKey === "status" ? RANK[r.status] : sortKey === "sym" ? r.sym : (warm(r) && (sortKey === "net" || sortKey === "z") ? -1e9 : r[sortKey]);
+  rows.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * sortDir; });
+  const m = snap.model;
+  $("mk-body").innerHTML = rows.map(r => {
+    const tds = COLS.map(c => {
+      let extra = "";
+      if (c.k === "z" && !warm(r) && r.z >= m.z_entry) extra = "pos";
+      else if (c.k === "net" && !warm(r)) extra = cls(r.net);
+      else if (c.k === "mi" && Math.abs(r.mi) >= 10) extra = "warn";
+      else if (c.k === "age" && r.age > 2000) extra = "neg";
+      return `<td class="${c.cls || "n"} ${extra}">${c.f(r)}</td>`;
+    }).join("");
+    return `<tr class="${r.status}">${tds}</tr>`;
+  }).join("");
+}
+
+function renderAll() {
+  const s = snap.stats, f = snap.feed, h = snap.halt, m = snap.model;
+  const mode = $("b-mode");
+  mode.textContent = snap.mode === "live" ? `LIVE · ${snap.env.toUpperCase()}` : "PAPER";
+  mode.className = "badge " + snap.mode;
+  $("b-sim").hidden = f.kind !== "sim";
+  $("dot").className = "dot " + (f.ok ? "ok" : "bad");
+  const fb = f.configured === "ws" && f.kind === "rest";
+  $("feedtxt").textContent = !f.ok ? "feed down" : f.kind === "sim" ? "sim feed"
+    : f.kind === "ws" ? `Binance WebSocket · ${f.latency_ms.toFixed(0)}ms lag`
+    : `Binance REST${fb ? " (fallback)" : ""} · ${f.latency_ms.toFixed(0)}ms`;
+
+  $("k-markets").textContent = s.scanned;
+  $("k-markets-s").textContent = `${s.fresh} fresh · ${s.scanned - s.fresh} stale`;
+  $("k-signals").textContent = s.signals;
+  $("k-signals-s").textContent = `z ≥ ${m.z_entry} & net ≥ ${m.min_net_edge_bps} bps`;
+  $("k-open").textContent = `${s.open}/${s.max_open}`;
+  $("k-open-s").textContent = `$${s.open_notional.toFixed(0)} deployed`;
+  const real = $("k-real"); real.textContent = money(s.realized); real.className = "v " + cls(s.realized);
+  $("k-real-s").textContent = `unrealised ${money(s.unrealized)}`;
+  const day = $("k-day"); day.textContent = money(s.day); day.className = "v " + cls(s.day);
+  $("k-day-s").textContent = `limit −$${s.day_limit.toFixed(0)}`;
+  const n = s.wins + s.losses;
+  $("k-win").textContent = n ? (s.win_rate * 100).toFixed(0) + "%" : "–";
+  $("k-win-s").textContent = `${s.wins}W / ${s.losses}L`;
+  $("k-feed").textContent = f.kind.toUpperCase();
+  $("k-feed-s").textContent = `${f.polls} updates · tick ${s.tick_ms.toFixed(0)}ms · up ${dur(s.uptime_s)}`;
+
+  const banner = $("banner");
+  if (!f.ok) { banner.className = "banner err show"; banner.textContent = `Feed error: ${f.last_error || "no data yet"} — no new entries until quotes are fresh.`; }
+  else if (h.halted) { banner.className = "banner show" + (h.reason.startsWith("FAULT") ? " err" : ""); banner.textContent = `Entries halted — ${h.reason}`; }
+  else if (!h.trading) { banner.className = "banner show"; banner.textContent = "Monitor-only mode (--no-trade): the bot will not open positions."; }
+  else banner.className = "banner";
+
+  renderMarkets();
+
+  $("pos-hint").textContent = s.open ? `${s.open} open` : "";
+  $("pos-body").innerHTML = snap.positions.length ? snap.positions.map(p =>
+    `<tr><td class="sym">${esc(p.sym)}</td><td class="n">${dur(p.held_s)}</td><td class="n">$${p.notional.toFixed(0)}</td><td class="n">${sg(p.entry_basis, 1)}</td><td class="n">${sg(p.basis_now, 1)}</td><td class="n ${cls(p.unreal)}">${money(p.unreal)}</td></tr>`
+  ).join("") : `<tr><td colspan="6" class="empty">No open positions.</td></tr>`;
+
+  $("tr-body").innerHTML = snap.trades.length ? snap.trades.map(t =>
+    `<tr><td class="sym">${esc(t.sym)}</td><td class="n ${cls(t.pnl)}">${money(t.pnl)}</td><td class="n ${cls(t.bps)}">${sg(t.bps, 1)}</td><td class="n">${dur(t.held_s)}</td><td class="mut">${esc(t.reason)}</td></tr>`
+  ).join("") : `<tr><td colspan="5" class="empty">No closed trades yet.</td></tr>`;
+
+  $("ev-body").innerHTML = snap.events.length ? snap.events.map(e =>
+    `<div class="ev ${esc(e.lvl)}"><time>${new Date(e.ts * 1000).toLocaleTimeString([], { hour12: false })}</time><span>${esc(e.msg)}</span></div>`
+  ).join("") : `<div class="empty">Waiting for events…</div>`;
+
+  $("foot").textContent = `Round-trip cost ${m.cost_bps.toFixed(1)} bps (fees + slippage, both legs, in and out). A trade needs z ≥ ${m.z_entry} and expected net edge ≥ ${m.min_net_edge_bps} bps after that cost. Exit at z ≤ ${m.exit_z}, stop-loss, or timeout. Size ${"$" + m.trade_usd.toFixed(0)} per position.`;
+}
+
+
+let lastOk = 0, offlineMsg = "";
+const STALE_AFTER_S = 45;
+
+function showBanner(text, error) {
+  const b = $("banner");
+  b.className = "banner show" + (error ? " err" : "");
+  b.textContent = text;
+}
+
+function applyAge(age) {
+  const upd = $("updated");
+  upd.textContent = "updated " + dur(age) + " ago";
+  if (age > STALE_AFTER_S) {
+    $("dot").className = "dot bad";
+    showBanner(`Last update ${dur(age)} ago. The bot may be stopped, offline or the computer asleep, so the figures below are old.`, true);
+  }
+}
+
+async function poll() {
+  try {
+    // Built from the origin only: a page opened as https://user:pass@host/ would otherwise make fetch() throw.
+    const r = await fetch(location.origin + "/api/snapshot", { cache: "no-store", credentials: "same-origin" });
+    if (r.status === 401) { location.reload(); return; }
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+    if (data.offline || !data.snapshot) {
+      offlineMsg = "The bot is not publishing (stopped, offline or asleep).";
+      $("dot").className = "dot bad"; $("feedtxt").textContent = "bot offline"; $("updated").textContent = "no data";
+      showBanner(offlineMsg + (snap ? " Showing the last data received." : ""), true);
+      return;
+    }
+    snap = data.snapshot;
+    lastOk = Date.now();
+    renderAll();
+    applyAge(Math.max(0, data.server_time - snap.published_at));
+  } catch (e) {
+    $("dot").className = "dot bad";
+    showBanner("Cannot reach the dashboard service: " + e.message, true);
+  }
+}
+
+renderHead();
+poll();
+setInterval(() => { if (!document.hidden) poll(); }, 5000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+</script>
+</body>
+</html>

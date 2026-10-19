@@ -1,0 +1,15 @@
+.venv/
+.git/
+.claude/
+.env
+.env.*
+data/
+logs/
+tests/
+scripts/
+deploy/
+vercel-dashboard/
+__pycache__/
+*.pyc
+.DS_Store
+KILL

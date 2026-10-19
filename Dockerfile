@@ -1,0 +1,20 @@
+# Paper-mode arbbot for container hosts (Render, Fly, ...). Serves only a health check, never the dashboard.
+FROM python:3.14-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY run.py config.toml ./
+COPY arbbot ./arbbot
+COPY web ./web
+RUN mkdir -p data logs
+
+# Runs as root on purpose: a persistent disk mounted at /app/data is root-owned on most hosts, and a non-root user
+# would then fail to write the database. The process only makes outbound connections and answers /healthz.
+# --hosted is paper-only; real orders are refused in this mode.
+CMD ["python", "run.py", "--hosted", "--min-samples", "20"]

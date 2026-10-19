@@ -1,0 +1,30 @@
+# Render Blueprint for the paper-mode bot. Region MUST stay frankfurt (or singapore): Binance refuses US addresses.
+#
+# Free plan: sleeps after 15 min without inbound web traffic and loses its database on every restart. To keep the
+# bot awake, point an uptime pinger (e.g. UptimeRobot, every 5 min) at https://<service>.onrender.com/healthz.
+# Persistent plan: change the service to the smallest paid instance in the Render dashboard (Settings > Instance Type)
+# or set `plan` to a paid ID such as 0.5c-512mb, uncomment the disk block, then the paper book and P&L survive restarts.
+# Secrets are never stored here: Render asks for each `sync: false` value when you create the Blueprint.
+services:
+  - type: web
+    name: arbbot
+    runtime: docker
+    region: frankfurt
+    plan: free
+    healthCheckPath: /healthz
+    autoDeployTrigger: "off"
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: DASHBOARD_PUSH_URL
+        sync: false
+      - key: DASHBOARD_PUSH_TOKEN
+        sync: false
+      # - key: ARBBOT_RECORD      # persistent plan only: record market data to the disk for backtesting
+      #   value: "1"
+    # disk:                        # persistent plan only (not available on free)
+    #   name: arbbot-data
+    #   mountPath: /app/data
+    #   sizeGB: 2
