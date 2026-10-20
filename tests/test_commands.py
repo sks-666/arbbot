@@ -293,6 +293,24 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.eng.risk.manual_halt)
         self.assertEqual(self.bot.sent, [])
 
+    async def test_custom_paper_trade_over_telegram_needs_the_authorised_chat_and_a_confirm(self):
+        self.eng.clock = lambda: 1030.0  # quotes in this test are stamped with simulated time
+        listener = self.start_listener()
+        await asyncio.sleep(0.2)
+        self.bot.push(20, 999, "/open BTC 100")  # a stranger
+        self.bot.push(21, 999, "/confirm")
+        self.assertTrue(await self.wait_for(lambda: listener.ignored == 2))
+        self.assertEqual(self.eng.pf.open, {})
+        self.bot.push(22, 42, "/open BTC 100")  # you: preview only
+        self.assertTrue(await self.wait_for(lambda: any("not opened yet" in t for t in self.bot.texts)))
+        self.assertEqual(self.eng.pf.open, {})
+        self.bot.push(23, 42, "/confirm")
+        self.assertTrue(await self.wait_for(lambda: any("Opened a paper trade" in t for t in self.bot.texts)))
+        self.assertTrue(self.eng.pf.open["BTCUSDT"].manual)
+        self.bot.push(24, 42, "/close BTC")
+        self.assertTrue(await self.wait_for(lambda: any("Closed BTCUSDT" in t for t in self.bot.texts)))
+        self.assertEqual(self.eng.pf.open, {})
+
     async def test_commands_sent_while_offline_are_not_replayed(self):
         self.bot.push(1, 42, "/pause")  # sent hours ago, while the bot was down
         self.bot.push(2, 42, "/pause")

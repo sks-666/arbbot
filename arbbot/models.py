@@ -101,6 +101,7 @@ class Position:
     entry_mid_bps: float = 0.0
     predicted_net_bps: float = 0.0
     funding_interval_h: float = 8.0
+    manual: bool = False             # opened by hand from Telegram (/open): held until /close, only protective exits apply
 
 
 @dataclass

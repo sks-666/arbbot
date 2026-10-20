@@ -1,6 +1,7 @@
 """One scan cycle: evaluate every market -> manage exits -> take new entries -> expose a snapshot."""
 import asyncio
 import logging
+import math
 import time
 from collections import deque
 
@@ -41,6 +42,7 @@ class Engine:
         self.tick_ms = 0.0
         self.flatten_requested = False
         self.started = time.time()
+        self.clock = time.time                  # wall clock for manual trades; replaceable so tests can use simulated time
         self._update_buffer()
 
     def _update_buffer(self) -> None:
@@ -166,8 +168,10 @@ class Engine:
             return "stop-loss"
         frozen = pos.sigma_entry > 0  # False only for positions saved by an older version
         # Secondary stop on the mid basis (not the executable one, so a momentarily wide spread can't trigger it).
-        if frozen and sig.basis_mid_bps - pos.entry_mid_bps >= st.stop_loss_bps:
+        if (frozen or pos.manual) and sig.basis_mid_bps - pos.entry_mid_bps >= st.stop_loss_bps:
             return "basis-stop"
+        if pos.manual:
+            return None  # hand-picked trades stay open until /close; only the protective exits above apply
         held = now - pos.opened_at
         if held < st.min_hold_s:
             return None
@@ -293,6 +297,102 @@ class Engine:
                 now,
             )
 
+    # ---- custom (manual) paper trades, driven from Telegram ------------------------------------
+    def manual_block_reason(self, symbol: str, usd: float, sig: Signal | None = None) -> str:
+        """Why a hand-picked trade can't be opened right now ('' = it can). No side effects.
+
+        Paper only, and it respects the same limits as automatic entries (halts, open-position cap, total
+        exposure, order-book depth); it only skips the signal itself, which is the point of choosing by hand.
+        """
+        c = self.cfg.risk
+        if self.executor.live:
+            return "custom trades are paper-only: real orders are never placed from a chat message"
+        if self.risk.halted:
+            return f"entries are halted ({self.risk.halt_reason})"
+        m = self.board.markets.get(symbol)
+        sig = sig or self.sigs.get(symbol)
+        if m is None or sig is None or m.spot is None or m.perp is None:
+            return "it is not being scanned"
+        if sig.status == "stale":
+            return "there are no fresh quotes right now"
+        if symbol in self.pf.open:
+            return "it is already open"
+        if len(self.pf.open) >= c.max_open_positions:
+            return f"already at the limit of {c.max_open_positions} open positions"
+        if not math.isfinite(usd) or usd < c.min_trade_usd:
+            return f"the size must be at least ${c.min_trade_usd:.0f}"
+        room = c.max_total_notional_usd - self.pf.open_notional()
+        if usd > room:
+            return f"that would exceed the total exposure cap (${max(room, 0):.0f} left)"
+        if sig.fillable_usd < c.min_touch_depth_usd:
+            return (f"the order book is too thin (${sig.fillable_usd:.0f} at the best price, "
+                    f"need ${c.min_touch_depth_usd:.0f})")
+        cap = sig.fillable_usd * c.depth_fraction
+        if usd > cap:
+            return f"too big for this book: at most ${cap:.0f} (half of the ${sig.fillable_usd:.0f} at the best price)"
+        return ""
+
+    async def open_manual(self, symbol: str, usd: float) -> tuple[bool, str]:
+        """Open a hand-picked LONG spot / SHORT perp paper position. Returns (ok, message for the chat)."""
+        now = self.clock()
+        why = self.manual_block_reason(symbol, usd)
+        if why:
+            return False, f"Can't open {symbol}: {why}."
+        m = self.board.markets[symbol]
+        t_start, books = time.monotonic(), None
+        if self.depth is not None:
+            books = await self.depth.books(m)  # None on error: fall back to top-of-book fills
+        now_fill = now + (time.monotonic() - t_start)
+        sig = self.scanner.evaluate(m, now_fill)  # fresh quotes, never the ones from before the wait
+        why = self.manual_block_reason(symbol, usd, sig)  # and re-check: the market and our own book may have moved
+        if why:
+            return False, f"Can't open {symbol}: {why} (after {now_fill - now:.1f}s waiting for the order book)."
+        try:
+            pos = await self.executor.open(m, sig, usd, now_fill, books=books)
+        except UnhedgedError as e:
+            self.risk.trip_fault(str(e))
+            self.event("error", f"UNHEDGED on manual entry: {e}", now)
+            return False, f"⚠️ Entry for {symbol} failed and left a leg unhedged; entries are halted. Check /status."
+        except Exception as e:
+            self.event("error", f"manual entry {symbol} failed: {e}", now)
+            if self.risk.record_error():
+                self.event("error", f"fault breaker tripped: {self.risk.fault}", now)
+            return False, f"The entry for {symbol} failed ({type(e).__name__}). Nothing was opened."
+        self.risk.record_success()
+        pos.manual = True
+        pos.opened_at = now + (time.monotonic() - t_start)
+        pos.predicted_net_bps = 0.0  # no model forecast for a hand-picked trade: keeps the adaptive buffer clean
+        self.pf.add(pos)
+        if self.recorder is not None:
+            self.recorder.event("entry", now, sym=symbol, notional=pos.notional, z=sig.z, predicted_net_bps=0.0,
+                                entry_basis_bps=pos.entry_basis_bps, perp_px=pos.perp_entry, spot_px=pos.spot_entry,
+                                live=False, manual=True)
+        self.event("entry", f"MANUAL ENTER {symbol} {pos.notional:.0f} USD | basis {pos.entry_basis_bps:+.1f} bps", now)
+        return True, (
+            f"✅ Opened a paper trade: {symbol} ${pos.notional:.0f}\n"
+            f"• LONG spot @ {pos.spot_entry:.6g} / SHORT perp @ {pos.perp_entry:.6g}\n"
+            f"• entry basis {pos.entry_basis_bps:+.1f} bps · fees paid ${pos.fees_paid:.2f}\n"
+            f"It stays open until you send /close {symbol.removesuffix('USDT')}. "
+            f"Protective exits still apply (stop-loss, stale feed, daily loss limit, kill switch)."
+        )
+
+    async def close_manual(self, symbol: str) -> tuple[bool, str]:
+        """Close an open paper position now. Returns (ok, message for the chat)."""
+        if self.executor.live:
+            return False, "Closing from chat is paper-only: real orders are never placed from a chat message."
+        pos = self.pf.open.get(symbol)
+        if pos is None:
+            return False, f"{symbol} is not open."
+        m, sig = self.board.markets.get(symbol), self.sigs.get(symbol)
+        if m is None or sig is None or m.spot is None or m.perp is None or sig.status == "stale":
+            return False, f"There are no fresh quotes for {symbol} right now. Try again in a moment."
+        await self._close(pos, sig, self.clock(), "manual-close")
+        if symbol in self.pf.open:
+            return False, f"The close for {symbol} failed. Check /status."
+        t = self.pf.closed[-1]
+        return True, (f"✅ Closed {symbol}: pnl {t.pnl_usd:+.2f} USD ({t.pnl_bps:+.1f} bps), "
+                      f"held {max(0.0, t.closed_at - t.opened_at):.0f}s, fees ${t.fees_usd:.2f}.")
+
     # ---- dashboard snapshot --------------------------------------------------------------------
     def snapshot(self) -> dict:
         now = time.time()
@@ -315,7 +415,7 @@ class Engine:
             positions.append({
                 "sym": sym, "held_s": now - pos.opened_at, "notional": pos.notional, "entry_basis": pos.entry_basis_bps,
                 "basis_now": sig.basis_out_bps if sig else 0.0, "z": sig.z if sig else 0.0, "unreal": u,
-                "funding": pos.funding_acc, "live": pos.live,
+                "funding": pos.funding_acc, "live": pos.live, "manual": pos.manual,
             })
         trades = [
             {"sym": t.symbol, "closed_at": t.closed_at, "pnl": t.pnl_usd, "bps": t.pnl_bps, "reason": t.reason,

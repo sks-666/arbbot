@@ -139,7 +139,7 @@ executor.py   PaperExecutor (book-VWAP fills + fees + slippage)
 live.py       LiveExecutor (both legs concurrently, partial-fill rebalancing, real fee tiers, reconcile)
 recorder.py   gzip-JSONL market recorder + depth sampler (data/recordings)
 backtest.py   (arbbot/backtest.py) info | slippage | replay with --set / --sweep
-commands.py   Telegram questions and /pause /resume (your chat only)
+commands.py   Telegram questions, /pause /resume, and custom paper trades /open /confirm /close (your chat only)
 portfolio.py  positions + SQLite persistence (data/<mode>-<env>-<feed>.db)
 server.py     aiohttp dashboard + WebSocket snapshots + guarded controls
 alerts.py     Telegram notifier (queued, rate-limited, token-safe)
@@ -187,12 +187,34 @@ Type in plain words or use the `/` menu (registered automatically):
 | `/status` | Feed health, entries active/halted, open positions, P&L, uptime |
 | `/positions` · `/pnl` · `/top 10` | Open positions · profit/loss and last trades · best markets by edge |
 | `/pause` · `/resume` | Stop / allow new entries |
+| `/open BTC 200` → `/confirm` · `/cancel` | A custom **paper** trade (see below) |
+| `/close BTC` | Close an open paper position now |
 
 Safety: only your configured chat is answered (everyone else is ignored); commands sent while the bot was
-offline are skipped, never replayed; plain words like "stop trading" never change anything (only the explicit
-`/pause` and `/resume` do); `/resume` cannot override a fault, the kill file or the daily loss limit; and
-nothing here can place an order or close a position. Only **one** running bot may poll a given Telegram bot
-token (a second one is detected and backs off). Turn it off with `commands = false` under `[alerts]`.
+offline are skipped, never replayed; plain words like "stop trading" or "open btc" never change anything (only the
+explicit slash commands do); `/resume` cannot override a fault, the kill file or the daily loss limit; and no
+command can place a **real** order (the trade commands refuse when the bot runs `--live`). Only **one** running bot
+may poll a given Telegram bot token (a second one is detected and backs off). Turn it off with `commands = false`
+under `[alerts]`.
+
+### Custom paper trades from Telegram
+
+`/open BTC 200` (market, then size in USD; the size defaults to `trade_notional_usd`) replies with a **preview**
+and opens nothing. Send `/confirm` within 60 s to open it, or `/cancel`. Then `/close BTC` closes it whenever you like.
+
+* **Same side as the bot:** LONG spot / SHORT perp, at the current executable prices with the usual fees and
+  slippage. The reverse side needs borrowed spot and isn't built.
+* **Same limits as automatic entries:** it refuses while entries are halted (pause, kill file, daily loss limit,
+  fault), when the market has no fresh quotes, is already open, would exceed `max_open_positions` or
+  `max_total_notional_usd`, has a thin book (`min_touch_depth_usd`), or the size is more than half the touch depth
+  (`depth_fraction`). The refusal says which. It skips only the *signal*, which is the point of choosing by hand.
+  The preview is honest: with a flat basis a trade starts about the 34 bps round-trip cost under water.
+* **Held until you close it.** The strategy's convergence and 15-minute timeout exits don't apply to a manual trade;
+  the protective ones still do (P&L stop, +25 bps mid-basis stop, stale feed, kill file, daily loss limit, flatten).
+* **Bookkeeping:** it counts in realised P&L and the daily loss limit like any paper trade, is recorded as exit
+  reason `manual-close`, is flagged `manual` on the dashboard snapshot, and never feeds the adaptive risk buffer
+  (no model forecast exists for it).
+* **Paper only.** In `--live` mode `/open` and `/close` refuse; real orders are never placed from a chat message.
 
 ## Hosted read-only dashboard (Vercel)
 

@@ -1,12 +1,15 @@
-"""Telegram command interface: ask the bot what the market looks like, and pause/resume entries.
+"""Telegram command interface: ask the bot what the market looks like, pause/resume entries, and open or close
+custom PAPER trades.
 
-CommandHandler turns a message into a reply from live engine state (pure, no network: easy to test).
+CommandHandler turns a message into a reply from live engine state (no network of its own: easy to test).
 TelegramListener long-polls getUpdates, answers ONLY the configured chat, and ignores everyone else.
-Controls are limited to /pause and /resume. Nothing here can place an order or close a position.
+Controls: /pause and /resume, plus /open (needs /confirm within a minute), /cancel and /close for paper trades.
+The engine refuses all of the trade commands when it is running live: no real order is ever placed from a chat.
 """
 import asyncio
 import logging
 import re
+import time
 
 import aiohttp
 
@@ -14,8 +17,10 @@ from .alerts import Notifier
 from .config import AlertsCfg
 from .engine import Engine
 from .models import Signal
+from .scanner import round_trip_cost_bps
 
 log = logging.getLogger("commands")
+PENDING_TTL_S = 60.0  # a /open request must be confirmed within this long
 
 MENU = [
     ("signals", "Any long/short trades in the market right now?"),
@@ -26,6 +31,10 @@ MENU = [
     ("market", "One market: /market BTC"),
     ("pause", "Pause new entries"),
     ("resume", "Resume entries"),
+    ("open", "Custom PAPER trade: /open BTC 200, then /confirm"),
+    ("confirm", "Confirm the pending /open"),
+    ("cancel", "Cancel the pending /open"),
+    ("close", "Close a paper position: /close BTC"),
     ("help", "What I can answer"),
 ]
 
@@ -37,6 +46,9 @@ HELP = (
     "• /status · /positions · /pnl · /top 10\n\n"
     "Controls\n"
     "• /pause stops new entries · /resume allows them again\n\n"
+    "Custom PAPER trades (never real orders)\n"
+    "• /open BTC 200 shows a preview, /confirm within 60 s opens it, /cancel drops it\n"
+    "• /close BTC closes it; until then only the protective exits apply\n\n"
     "I only trade LONG spot / SHORT perp, when the perp is rich versus spot. "
     "Everything else I show is information only."
 )
@@ -69,8 +81,25 @@ class CommandHandler:
     def __init__(self, engine: Engine, label: str = ""):
         self.e = engine
         self.label = label
+        self.pending: tuple[str, float, float] | None = None  # (symbol, usd, expires_at) from /open, awaiting /confirm
+        self._now = time.monotonic                            # replaceable in tests
 
     # ---- routing -------------------------------------------------------------------------------
+    async def reply(self, text: str) -> str:
+        """Like answer(), plus the trade commands, which need the engine (async)."""
+        t = (text or "").strip()
+        cmd, _, arg = t.partition(" ")
+        cmd = cmd.lower().split("@")[0]
+        if cmd == "/open":
+            return self._open_request(arg.strip())
+        if cmd == "/confirm":
+            return await self._confirm()
+        if cmd == "/cancel":
+            return self._cancel()
+        if cmd == "/close":
+            return await self._close_request(arg.strip())
+        return self.answer(t)
+
     def answer(self, text: str) -> str:
         t = (text or "").strip()
         if not t:
@@ -106,6 +135,9 @@ class CommandHandler:
         has = lambda *keys: any(k in low for k in keys)  # noqa: E731
         if has("help", "what can you", "commands"):
             return HELP
+        if low.startswith(("open ", "buy ", "enter ")):
+            return ("To open a custom PAPER trade use a command: /open BTC 200, then /confirm. "
+                    "I never place real orders from a chat message.")
         if has("position", "holding", "open trade", "what do you hold"):
             return self._positions()
         if has("pnl", "p&l", "profit", "loss", "performance", "how much"):
@@ -289,6 +321,72 @@ class CommandHandler:
             return f"Pause cleared, but entries stay halted: {r.halt_reason}."
         return "▶️ Entries resumed."
 
+    # ---- custom paper trades -------------------------------------------------------------------
+    def _resolve(self, token: str) -> str | None:
+        return self._find_symbol(set(re.findall(r"[a-z0-9&]+", token.lower())))
+
+    def _open_request(self, arg: str) -> str:
+        """Step 1: validate and show a preview. Nothing is opened until /confirm."""
+        e = self.e
+        tokens = arg.replace("$", " ").split()
+        default = e.cfg.risk.trade_notional_usd
+        if not tokens:
+            return (f"Which market? Example: /open BTC 200 (size in USD, default ${default:.0f}). "
+                    f"I'll show a preview and you send /confirm.")
+        sym = self._resolve(tokens[0])
+        if sym is None:
+            return f"I don't know the market \"{tokens[0]}\". Try /top to see what I scan."
+        usd = default
+        if len(tokens) > 1:
+            try:
+                usd = float(tokens[1])
+            except ValueError:
+                return f"\"{tokens[1]}\" is not a number. Example: /open {tokens[0]} 200"
+        why = e.manual_block_reason(sym, usd)
+        if why:
+            self.pending = None
+            return f"Can't open {sym}: {why}."
+        self.pending = (sym, usd, self._now() + PENDING_TTL_S)
+        sig = e.sigs[sym]
+        cost = round_trip_cost_bps(e.cfg.fees)
+        return (
+            f"📝 Custom PAPER trade, not opened yet {self._tag()}\n"
+            f"{sym} · LONG spot / SHORT perp · ${usd:.0f}\n"
+            f"Executable basis now {_bps(sig.basis_in_bps)} (the model's own signal bar is z ≥ {e.cfg.strategy.z_entry:g}; "
+            f"this market is at z {sig.z:.1f}).\n"
+            f"Round-trip cost is about {cost:.0f} bps (${usd * cost / 1e4:.2f}), so unless the basis narrows by more "
+            f"than that, it loses money.\n"
+            f"Send /confirm within {PENDING_TTL_S:.0f}s to open it, or /cancel."
+        )
+
+    async def _confirm(self) -> str:
+        pending, self.pending = self.pending, None
+        if pending is None:
+            return "Nothing to confirm. Start with /open BTC 200."
+        sym, usd, expires = pending
+        if self._now() > expires:
+            return f"That request expired ({PENDING_TTL_S:.0f}s). Send /open {sym.removesuffix('USDT')} again."
+        _ok, msg = await self.e.open_manual(sym, usd)
+        return msg
+
+    def _cancel(self) -> str:
+        if self.pending is None:
+            return "Nothing was pending."
+        sym = self.pending[0]
+        self.pending = None
+        return f"Cancelled. {sym} was not opened."
+
+    async def _close_request(self, arg: str) -> str:
+        e = self.e
+        if not arg:
+            held = ", ".join(sym.removesuffix("USDT") for sym in e.pf.open) or "nothing is open"
+            return f"Which one? Example: /close BTC. Open now: {held}."
+        sym = self._resolve(arg.split()[0])
+        if sym is None:
+            return f"I don't know the market \"{arg.split()[0]}\"."
+        _ok, msg = await e.close_manual(sym)
+        return msg
+
 
 class TelegramListener:
     """Long-polls getUpdates and answers the configured chat only."""
@@ -358,7 +456,7 @@ class TelegramListener:
             return
         log.info("telegram command: %s", text[:60].replace("\n", " "))
         try:
-            reply = self.handler.answer(text)
+            reply = await self.handler.reply(text)
         except Exception as e:  # a bug in an answer must never take the bot down
             log.exception("command failed")
             reply = f"⚠️ I hit an error answering that ({type(e).__name__}). Try /status."
