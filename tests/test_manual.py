@@ -184,6 +184,37 @@ class ManualTradeTests(unittest.IsolatedAsyncioTestCase):
         legacy = {k: v for k, v in saved.__dict__.items() if k != "manual"}  # a row written by an older version
         self.assertFalse(Position(**legacy).manual)
 
+    async def test_position_detail_for_an_automatic_and_a_manual_trade(self):
+        await step(self.eng, self.t, {"ETHUSDT": 90.0})  # a real signal: the bot opens ETH by itself
+        self.assertIn("ETHUSDT", self.eng.pf.open)
+        await self.open_it("BTC", 150)
+        await self.advance(30, {"ETHUSDT": 60.0})
+        eth = await self.h.reply("/positions ETH")
+        for needle in ("ETHUSDT", "AUTO", "Size $200", "Opened 30s ago", "fees paid", "Model at entry",
+                       "Now: unwind basis", "P&L if closed now", "converged when z", "timeout in", "P&L stop at -59 bps",
+                       "basis stop at +25 bps"):
+            self.assertIn(needle, eth)
+        btc = await self.h.reply("/positions BTC")
+        for needle in ("BTCUSDT", "MANUAL", "Size $150", "held until you send /close BTC", "P&L stop at -59 bps"):
+            self.assertIn(needle, btc)
+        for absent in ("Model at entry", "timeout in", "converged when"):
+            self.assertNotIn(absent, btc)  # a manual trade has no model forecast and no automatic exits
+        listing = await self.h.reply("/positions")
+        self.assertEqual(listing.count("manual"), 1)  # only the hand-picked one is tagged
+        self.assertIn("Details of one: /positions BTC", listing)
+        self.assertEqual(await self.h.reply("show me the eth position"), eth)
+        self.assertEqual(await self.h.reply("/position eth"), eth)
+
+    async def test_position_detail_edge_cases(self):
+        await self.open_it("BTC", 100)
+        self.assertIn("is not open", await self.h.reply("/positions SOL"))
+        self.assertIn("don't know", await self.h.reply("/positions NOPE"))
+        await self.eng.tick(now=self.t + 10)  # stale (>3 s) but short of the 30 s stale-feed exit
+        stale = await self.h.reply("/positions BTC")
+        self.assertIn("No fresh quote", stale)
+        self.assertNotIn("Now:", stale)
+        self.assertIn("Size $100", stale)  # what was bought is still shown
+
     async def test_menu_and_help_mention_the_new_commands(self):
         names = [c for c, _ in MENU]
         for cmd in ("open", "confirm", "cancel", "close"):

@@ -185,7 +185,8 @@ Type in plain words or use the `/` menu (registered automatically):
 | "any trades long or short in the market?" or `/signals` | Live signals (LONG spot / SHORT perp) or, if none, the closest candidates and why they don't qualify, plus markets where the perp is cheaper than spot (information only) |
 | "how is BTC?" or `/market BTC` | Perp/spot prices, basis vs its normal range, z-score, net edge after costs, funding, depth, and which side the trade would be |
 | `/status` | Feed health, entries active/halted, open positions, P&L, uptime |
-| `/positions` · `/pnl` · `/top 10` | Open positions · profit/loss and last trades · best markets by edge |
+| `/positions` · `/pnl` · `/top 10` | Open positions (one summary each) · profit/loss and last trades · best markets by edge |
+| `/positions BTC` (or "show me the BTC position") | **Full detail of one open trade:** AUTO or MANUAL, size, the spot and perp quantities and prices paid, time held, entry basis, fees paid, funding earned, the model's z and expected net at entry, the unwind basis now, P&L if closed now, and the exit rules with how far each is (convergence z, timeout countdown, P&L stop, basis stop) |
 | `/pause` · `/resume` | Stop / allow new entries |
 | `/open BTC 200` → `/confirm` · `/cancel` | A custom **paper** trade (see below) |
 | `/close BTC` | Close an open paper position now |

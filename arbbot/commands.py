@@ -17,6 +17,7 @@ from .alerts import Notifier
 from .config import AlertsCfg
 from .engine import Engine
 from .models import Signal
+from .portfolio import unrealized_usd
 from .scanner import round_trip_cost_bps
 
 log = logging.getLogger("commands")
@@ -25,7 +26,7 @@ PENDING_TTL_S = 60.0  # a /open request must be confirmed within this long
 MENU = [
     ("signals", "Any long/short trades in the market right now?"),
     ("status", "Bot health, feed and P&L summary"),
-    ("positions", "Open positions"),
+    ("positions", "Open positions; details: /positions BTC"),
     ("pnl", "Profit and loss, recent trades"),
     ("top", "Top markets by edge: /top 10"),
     ("market", "One market: /market BTC"),
@@ -43,7 +44,8 @@ HELP = (
     "Questions\n"
     "• \"any trades long or short?\" or /signals\n"
     "• \"how is BTC?\" or /market BTC\n"
-    "• /status · /positions · /pnl · /top 10\n\n"
+    "• /status · /positions · /pnl · /top 10\n"
+    "• /positions BTC for the full detail of one open trade\n\n"
     "Controls\n"
     "• /pause stops new entries · /resume allows them again\n\n"
     "Custom PAPER trades (never real orders)\n"
@@ -116,8 +118,8 @@ class CommandHandler:
             return self._signals()
         if cmd == "/status":
             return self._status()
-        if cmd in ("/positions", "/pos"):
-            return self._positions()
+        if cmd in ("/positions", "/pos", "/position"):
+            return self._positions(arg)
         if cmd in ("/pnl", "/profit"):
             return self._pnl()
         if cmd in ("/top", "/markets"):
@@ -139,7 +141,8 @@ class CommandHandler:
             return ("To open a custom PAPER trade use a command: /open BTC 200, then /confirm. "
                     "I never place real orders from a chat message.")
         if has("position", "holding", "open trade", "what do you hold"):
-            return self._positions()
+            sym = self._find_symbol(words)
+            return self._position_detail(sym) if sym and sym in self.e.pf.open else self._positions()
         if has("pnl", "p&l", "profit", "loss", "performance", "how much"):
             return self._pnl()
         if has("status", "health", "alive", "uptime", "running", "feed"):
@@ -236,14 +239,64 @@ class CommandHandler:
             f"Trades: {st['wins']}W / {st['losses']}L · uptime {_dur(st['uptime_s'])}"
         )
 
-    def _positions(self) -> str:
+    def _positions(self, arg: str = "") -> str:
+        if arg.strip():
+            return self._position_detail(arg.strip().split()[0])
         s = self.e.snapshot()
         if not s["positions"]:
             return f"No open positions {self._tag()}"
         lines = [f"📂 {len(s['positions'])} open position(s) {self._tag()}"]
         for p in s["positions"]:
-            lines.append(f"• {p['sym']} ${p['notional']:.0f} · LONG spot / SHORT perp · held {_dur(p['held_s'])}\n"
-                         f"  entry basis {_bps(p['entry_basis'])} → now {_bps(p['basis_now'])} · unrealised {_money(p['unreal'])}")
+            tag = " · manual" if p.get("manual") else ""
+            bps = p["unreal"] / p["notional"] * 1e4 if p["notional"] else 0.0
+            lines.append(f"• {p['sym']}{tag} ${p['notional']:.0f} · LONG spot / SHORT perp · held {_dur(p['held_s'])}\n"
+                         f"  entry basis {_bps(p['entry_basis'])} → now {_bps(p['basis_now'])} · "
+                         f"unrealised {_money(p['unreal'])} ({_bps(bps)})")
+        lines.append("Details of one: /positions BTC")
+        return "\n".join(lines)
+
+    def _position_detail(self, token: str) -> str:
+        """Everything about one open position: what was bought, what it has cost, where it stands, how it will exit."""
+        e = self.e
+        sym = self._resolve(token)
+        if sym is None:
+            return f"I don't know the market \"{token}\". Try /positions."
+        pos = e.pf.open.get(sym)
+        if pos is None:
+            return f"{sym} is not open. Use /positions to see what is."
+        m, sig = e.board.markets.get(sym), e.sigs.get(sym)
+        st, fees = e.cfg.strategy, e.cfg.fees
+        held = max(0.0, e.clock() - pos.opened_at)
+        base = sym.removesuffix("USDT")
+        lines = [
+            f"📂 {sym} · {'MANUAL' if pos.manual else 'AUTO'} · LONG spot / SHORT perp {self._tag()}",
+            f"Size ${pos.notional:.0f}: spot {pos.spot_qty:.6g} @ {_px(pos.spot_entry)} · "
+            f"perp {pos.perp_qty:.6g} @ {_px(pos.perp_entry)}",
+            f"Opened {_dur(held)} ago · entry basis {_bps(pos.entry_basis_bps)} · fees paid ${pos.fees_paid:.2f} · "
+            f"funding {_money(pos.funding_acc)}",
+        ]
+        if not pos.manual:
+            lines.append(f"Model at entry: z {pos.entry_z:.1f}, expected net {_bps(pos.predicted_net_bps)}")
+        if m is None or sig is None or m.spot is None or m.perp is None or sig.status == "stale":
+            lines.append("No fresh quote right now, so the live figures are unavailable.")
+            return "\n".join(lines)
+        unreal = unrealized_usd(pos, m, fees)
+        pnl_bps = unreal / pos.notional * 1e4 if pos.notional else 0.0
+        lines.append(f"Now: unwind basis {_bps(sig.basis_out_bps)} (mid {_bps(sig.basis_mid_bps)}) · "
+                     f"P&L if closed now {_money(unreal)} ({_bps(pnl_bps)})")
+        exits = []
+        if pos.manual:
+            exits.append(f"held until you send /close {base}")
+        else:
+            if pos.sigma_entry > 0:
+                z_now = (sig.basis_mid_bps - pos.mu_entry) / pos.sigma_entry
+                exits.append(f"converged when z ≤ {st.exit_z:g} (now {z_now:.1f})")
+            exits.append(f"timeout in {_dur(max(0.0, st.max_hold_s - held))}")
+        exits.append(f"P&L stop at -{round_trip_cost_bps(fees) + st.stop_loss_bps:.0f} bps (now {_bps(pnl_bps)})")
+        if pos.sigma_entry > 0 or pos.manual:
+            exits.append(f"basis stop at +{st.stop_loss_bps:g} bps vs entry "
+                         f"(now {_bps(sig.basis_mid_bps - pos.entry_mid_bps)})")
+        lines.append("Exits: " + " · ".join(exits))
         return "\n".join(lines)
 
     def _pnl(self) -> str:
