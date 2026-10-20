@@ -32,7 +32,7 @@ MENU = [
     ("market", "One market: /market BTC"),
     ("pause", "Pause new entries"),
     ("resume", "Resume entries"),
-    ("open", "Custom PAPER trade: /open BTC 200, then /confirm"),
+    ("open", "Paper trade: BUY spot + SELL perp, e.g. /open BTC 200"),
     ("confirm", "Confirm the pending /open"),
     ("cancel", "Cancel the pending /open"),
     ("close", "Close a paper position: /close BTC"),
@@ -49,8 +49,11 @@ HELP = (
     "Controls\n"
     "• /pause stops new entries · /resume allows them again\n\n"
     "Custom PAPER trades (never real orders)\n"
-    "• /open BTC 200 shows a preview, /confirm within 60 s opens it, /cancel drops it\n"
-    "• /close BTC closes it; until then only the protective exits apply\n\n"
+    "• /open BTC 200 = BUY $200 of BTC spot (LONG) and SELL $200 of BTC perp (SHORT) at the same time. "
+    "It is ONE hedged pair, not a bet on BTC going up or down: it earns only if the perp's premium over spot narrows.\n"
+    "• It shows a preview first. /confirm within 60 s opens it, /cancel drops it\n"
+    "• /close BTC closes both sides; until then only the protective exits apply\n"
+    "• Not available: a pure long, a pure short, or the reverse pair (short spot / long perp)\n\n"
     "I only trade LONG spot / SHORT perp, when the perp is rich versus spot. "
     "Everything else I show is information only."
 )
@@ -138,7 +141,8 @@ class CommandHandler:
         if has("help", "what can you", "commands"):
             return HELP
         if low.startswith(("open ", "buy ", "enter ")):
-            return ("To open a custom PAPER trade use a command: /open BTC 200, then /confirm. "
+            return ("To open a custom PAPER trade use a command: /open BTC 200, then /confirm. It buys the spot (LONG) "
+                    "and sells the perp (SHORT) together, as one hedged pair. "
                     "I never place real orders from a chat message.")
         if has("position", "holding", "open trade", "what do you hold"):
             sym = self._find_symbol(words)
@@ -384,8 +388,9 @@ class CommandHandler:
         tokens = arg.replace("$", " ").split()
         default = e.cfg.risk.trade_notional_usd
         if not tokens:
-            return (f"Which market? Example: /open BTC 200 (size in USD, default ${default:.0f}). "
-                    f"I'll show a preview and you send /confirm.")
+            return (f"Which market? Example: /open BTC 200 (size in USD, default ${default:.0f}).\n"
+                    f"That means BUY $200 of BTC spot (LONG) and SELL $200 of BTC perp (SHORT) at the same time: "
+                    f"one hedged pair, not a bet on the price. I'll show a preview and you send /confirm.")
         sym = self._resolve(tokens[0])
         if sym is None:
             return f"I don't know the market \"{tokens[0]}\". Try /top to see what I scan."
@@ -404,8 +409,10 @@ class CommandHandler:
         cost = round_trip_cost_bps(e.cfg.fees)
         return (
             f"📝 Custom PAPER trade, not opened yet {self._tag()}\n"
-            f"{sym} · LONG spot / SHORT perp · ${usd:.0f}\n"
-            f"Executable basis now {_bps(sig.basis_in_bps)} (the model's own signal bar is z ≥ {e.cfg.strategy.z_entry:g}; "
+            f"{sym}: BUY ${usd:.0f} spot (LONG) + SELL ${usd:.0f} perp (SHORT), one hedged pair.\n"
+            f"You are NOT betting on the price going up or down. You earn only if the perp's premium over spot "
+            f"narrows. (The reverse pair, short spot / long perp, isn't supported.)\n"
+            f"Premium now {_bps(sig.basis_in_bps)} (the bot's own entry bar is z ≥ {e.cfg.strategy.z_entry:g}; "
             f"this market is at z {sig.z:.1f}).\n"
             f"Round-trip cost is about {cost:.0f} bps (${usd * cost / 1e4:.2f}), so unless the basis narrows by more "
             f"than that, it loses money.\n"

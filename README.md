@@ -203,8 +203,11 @@ under `[alerts]`.
 `/open BTC 200` (market, then size in USD; the size defaults to `trade_notional_usd`) replies with a **preview**
 and opens nothing. Send `/confirm` within 60 s to open it, or `/cancel`. Then `/close BTC` closes it whenever you like.
 
-* **Same side as the bot:** LONG spot / SHORT perp, at the current executable prices with the usual fees and
-  slippage. The reverse side needs borrowed spot and isn't built.
+* **Long or short? Both, as one hedged pair.** `/open BTC 200` BUYS $200 of BTC spot (LONG) and SELLS $200 of BTC
+  perp (SHORT) at the same time, at the current executable prices with the usual fees and slippage. It is not a bet
+  on BTC going up or down: the two legs cancel the price move, and it earns only if the perp's premium over spot
+  narrows. A pure long, a pure short, or the reverse pair (short spot / long perp, which needs borrowed spot) are not
+  available.
 * **Same limits as automatic entries:** it refuses while entries are halted (pause, kill file, daily loss limit,
   fault), when the market has no fresh quotes, is already open, would exceed `max_open_positions` or
   `max_total_notional_usd`, has a thin book (`min_touch_depth_usd`), or the size is more than half the touch depth

@@ -215,6 +215,20 @@ class ManualTradeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Now:", stale)
         self.assertIn("Size $100", stale)  # what was bought is still shown
 
+    async def test_the_direction_is_spelled_out_everywhere_the_command_is_shown(self):
+        # "is it long or short?": the answer (both, as a hedged pair) must be visible without opening anything
+        for text in (HELP, await self.h.reply("/open"), await self.h.reply("/open BTC 200"),
+                     await self.h.reply("open btc 200")):
+            self.assertIn("LONG", text)
+            self.assertIn("SHORT", text)
+            self.assertIn("hedged pair", text)
+        self.assertIn("BUY $200 spot (LONG) + SELL $200 perp (SHORT)", await self.h.reply("/open BTC 200"))
+        self.assertIn("NOT betting on the price", await self.h.reply("/open BTC 200"))
+        self.assertIn("Not available: a pure long, a pure short", HELP)
+        menu = dict(MENU)["open"]
+        self.assertIn("BUY spot", menu)
+        self.assertIn("SELL perp", menu)
+
     async def test_menu_and_help_mention_the_new_commands(self):
         names = [c for c, _ in MENU]
         for cmd in ("open", "confirm", "cancel", "close"):
